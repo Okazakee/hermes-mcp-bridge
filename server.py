@@ -160,9 +160,12 @@ async def auth_middleware(request: Request, call_next):
 
 # ── Root / health ───────────────────────────────────────────────────────────
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "POST"])
 @app.get("/health")
-async def health():
+async def health(request: Request = None):
+    if request and request.method == "POST":
+        # Forward MCP JSON-RPC messages sent to root
+        return await messages(request)
     return {"status": "ok", "service": "Hermes MCP Bridge", "version": "1.0.0"}
 
 
@@ -204,10 +207,106 @@ async def sse_endpoint(request: Request):
 
 # ── Tool call endpoint ──────────────────────────────────────────────────────
 
-@app.post("/call_tool")
-async def call_tool(request: Request):
+@app.post("/messages")
+async def messages(request: Request):
     """
-    Direct tool invocation endpoint.
+    MCP JSON-RPC endpoint.
+    Accepts standard MCP protocol messages (initialize, tools/list, tools/call).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": None},
+        )
+
+    req_id = body.get("id", 0)
+    method = body.get("method", "")
+    params = body.get("params", {})
+    raw = body.get("raw", False)  # non-standard: return raw tool result instead of JSON-RPC wrapper
+
+    if method == "initialize":
+        return JSONResponse(content={
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                },
+                "serverInfo": {
+                    "name": "Hermes MCP Bridge",
+                    "version": "1.0.0",
+                },
+            },
+        })
+
+    if method == "notifications/initialized":
+        return JSONResponse(content={"jsonrpc": "2.0", "id": req_id, "result": {}})
+
+    if method == "tools/list":
+        # Reuse the existing tool definitions
+        tools_list = _get_mcp_tools()
+        return JSONResponse(content={
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"tools": tools_list},
+        })
+
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        args = params.get("arguments", {})
+
+        handler = TOOL_HANDLERS.get(tool_name)
+        if handler is None:
+            _log(tool_name, args, ok=False, detail=f"Unknown tool: {tool_name}")
+            return JSONResponse(
+                status_code=400,
+                content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}},
+            )
+
+        try:
+            result_json = handler(args)
+            result = json.loads(result_json)
+            ok = result.get("success", False)
+            _log(tool_name, args, ok=ok)
+
+            if raw:
+                return JSONResponse(content=result)
+
+            if ok:
+                return JSONResponse(content={
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"content": [{"type": "text", "text": json.dumps(result["data"], default=str)}]},
+                })
+            else:
+                return JSONResponse(content={
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32000, "message": result.get("error", "Tool execution failed")},
+                })
+        except Exception as exc:
+            tb = traceback.format_exc()
+            _log(tool_name, args, ok=False, detail=str(exc))
+            print(tb, file=sys.stderr, flush=True)
+            return JSONResponse(
+                status_code=500,
+                content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(exc)}},
+            )
+
+    # Unknown method
+    return JSONResponse(
+        status_code=400,
+        content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not found: {method}"}},
+    )
+
+# Keep the old /call_tool endpoint for backward compatibility
+@app.post("/call_tool")
+async def call_tool_legacy(request: Request):
+    """
+    Legacy direct tool invocation endpoint (backward compatible).
     Body: {"tool": "<name>", "args": {...}}
     Returns JSON with success/error + data.
     """
@@ -222,7 +321,6 @@ async def call_tool(request: Request):
     if not tool_name:
         return JSONResponse(status_code=400, content={"success": False, "error": "Missing 'tool' field"})
 
-    # Dispatch
     handler = TOOL_HANDLERS.get(tool_name)
     if handler is None:
         _log(tool_name, args, ok=False, detail=f"Unknown tool: {tool_name}")
@@ -415,6 +513,116 @@ TOOL_HANDLERS = {
 
 
 # ── Tool listing endpoint ───────────────────────────────────────────────────
+
+# ── MCP-compatible tool descriptions ────────────────────────────────────
+
+_TOOL_MCP_DEFS = [
+    {
+        "name": "list_directory",
+        "description": "List files in a directory (ls -la)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path (default: .)"},
+            },
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read the contents of a file",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write/overwrite content to a file",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path"},
+                "content": {"type": "string", "description": "Text content to write"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "search_files",
+        "description": "Search for a pattern inside files (grep)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex/search pattern"},
+                "path": {"type": "string", "description": "Directory to search in (default: .)"},
+                "file_glob": {"type": "string", "description": "File glob to filter (default: *)"},
+                "recursive": {"type": "boolean", "description": "Search recursively (default: true)"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "execute_command",
+        "description": "Execute a shell command (allowlist-enforced)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command to execute"},
+                "timeout": {"type": "number", "description": "Timeout in seconds (default: 30)"},
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "docker_ps",
+        "description": "List Docker containers",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "all": {"type": "boolean", "description": "Show all containers including stopped (default: false)"},
+            },
+        },
+    },
+    {
+        "name": "docker_logs",
+        "description": "Get logs from a Docker container",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "container": {"type": "string", "description": "Container name or ID"},
+                "tail": {"type": "number", "description": "Number of lines to tail (default: 100)"},
+            },
+            "required": ["container"],
+        },
+    },
+    {
+        "name": "system_info",
+        "description": "Get system info: CPU, RAM, disk, uptime, load",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "service_status",
+        "description": "Check systemd service status",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "Service name"},
+            },
+            "required": ["service"],
+        },
+    },
+]
+
+def _get_mcp_tools():
+    """Return tool definitions in MCP-compatible format."""
+    return _TOOL_MCP_DEFS
+
 
 @app.get("/tools")
 async def list_tools():
