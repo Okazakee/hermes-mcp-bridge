@@ -461,9 +461,10 @@ mcp_servers:
     url: "http://10.0.0.5:8000/"
     headers:
       Authorization: "Bearer YOUR_TOKEN"
-    exclude_tools:
-      - execute_command
-      - write_file
+    tools:
+      exclude:
+        - execute_command
+        - write_file
 ```
 
 ---
