@@ -35,7 +35,15 @@ echo ""
 # ── 1. Create app directory ─────────────────────────────────────────────────
 echo "[1/6] Creating ${APP_DIR}..."
 mkdir -p "${APP_DIR}"
-cp "${SCRIPT_DIR}/server.py" "${APP_DIR}/"
+
+# Only copy files if the script is not running from the install directory itself
+if [ "${SCRIPT_DIR}" != "${APP_DIR}" ]; then
+    cp "${SCRIPT_DIR}/server.py" "${APP_DIR}/"
+    echo "      Copied server.py to ${APP_DIR}/"
+else
+    echo "      Running from install dir, skipping copy (files already in place)"
+fi
+
 chown -R "${USER}:${GROUP}" "${APP_DIR}"
 
 # ── 2. Check for .env ───────────────────────────────────────────────────────

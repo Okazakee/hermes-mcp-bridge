@@ -135,8 +135,12 @@ app = FastAPI(title="Hermes MCP Bridge", version="1.0.0")
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    # Allow health/root endpoints without auth
-    if request.url.path in ("/", "/health", "/ping"):
+    # Allow health/ping endpoints without auth (any method)
+    if request.url.path in ("/health", "/ping"):
+        return await call_next(request)
+
+    # Allow GET / for health checks (no auth), but POST / requires auth
+    if request.url.path == "/" and request.method == "GET":
         return await call_next(request)
 
     # Allow OPTIONS preflight
@@ -184,6 +188,8 @@ async def sse_endpoint(request: Request):
     and receives results via this SSE stream.
     """
     async def event_stream():
+        # Tell the client where to POST MCP JSON-RPC messages
+        yield "event: endpoint\ndata: /messages\n\n"
         yield "event: ready\ndata: {}\n\n"
 
         # Keep the connection alive with periodic heartbeats
@@ -627,65 +633,7 @@ def _get_mcp_tools():
 @app.get("/tools")
 async def list_tools():
     """Return the list of available tools (MCP-compatible)."""
-    tools = [
-        {
-            "name": "list_directory",
-            "description": "List files in a directory (ls -la)",
-            "parameters": {"path": "Directory path (default: .)"},
-        },
-        {
-            "name": "read_file",
-            "description": "Read the contents of a file",
-            "parameters": {"path": "File path"},
-        },
-        {
-            "name": "write_file",
-            "description": "Write/overwrite content to a file",
-            "parameters": {"path": "File path", "content": "Text content to write"},
-        },
-        {
-            "name": "search_files",
-            "description": "Search for a pattern inside files (grep)",
-            "parameters": {
-                "pattern": "Regex/search pattern",
-                "path": "Directory to search in (default: .)",
-                "file_glob": "File glob to filter (default: *)",
-                "recursive": "Search recursively (default: true)",
-            },
-        },
-        {
-            "name": "execute_command",
-            "description": "Execute a shell command (allowlist-enforced)",
-            "parameters": {
-                "command": "Shell command to execute",
-                "timeout": "Timeout in seconds (default: 30)",
-            },
-        },
-        {
-            "name": "docker_ps",
-            "description": "List Docker containers",
-            "parameters": {"all": "Show all containers including stopped (default: false)"},
-        },
-        {
-            "name": "docker_logs",
-            "description": "Get logs from a Docker container",
-            "parameters": {
-                "container": "Container name or ID",
-                "tail": "Number of lines to tail (default: 100)",
-            },
-        },
-        {
-            "name": "system_info",
-            "description": "Get system info: CPU, RAM, disk, uptime, load",
-            "parameters": {},
-        },
-        {
-            "name": "service_status",
-            "description": "Check systemd service status",
-            "parameters": {"service": "Service name"},
-        },
-    ]
-    return {"tools": tools}
+    return {"tools": _get_mcp_tools()}
 
 
 # ── Main entrypoint ─────────────────────────────────────────────────────────
