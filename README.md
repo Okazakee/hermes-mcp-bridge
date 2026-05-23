@@ -17,22 +17,22 @@ Hermes Agent controls the machine it runs on, but what about your other machines
 ## Features
 
 - **9 MCP-compatible tools** exposed over HTTP and MCP JSON-RPC
-  - `list_directory` — List files in a directory
-  - `read_file` — Read a file's contents
-  - `write_file` — Write or overwrite a file
-  - `search_files` — Search for patterns inside files (grep)
-  - `execute_command` — Execute shell commands (allowlist-enforced)
-  - `docker_ps` — List Docker containers
-  - `docker_logs` — Get container logs
-  - `system_info` — CPU, RAM, disk, uptime, load average
-  - `service_status` — Check systemd service status
-- **MCP JSON-RPC transport** — Full `initialize`, `tools/list`, `tools/call` protocol support over HTTP POST
-- **MCP SSE transport** — Server-Sent Events with endpoint discovery for streaming MCP clients
+  - `list_directory` - List files in a directory
+  - `read_file` - Read a file's contents
+  - `write_file` - Write or overwrite a file
+  - `search_files` - Search for patterns inside files (grep)
+  - `execute_command` - Execute shell commands (allowlist-enforced)
+  - `docker_ps` - List Docker containers
+  - `docker_logs` - Get container logs
+  - `system_info` - CPU, RAM, disk, uptime, load average
+  - `service_status` - Check systemd service status
+- **MCP JSON-RPC transport** - Full `initialize`, `tools/list`, `tools/call` protocol support over HTTP POST
+- **MCP SSE transport** - Server-Sent Events with endpoint discovery for streaming MCP clients
 - **Bearer token authentication** on every protected endpoint
-- **Allowlist-based command execution** — only approved binaries can run, with fnmatch glob support
-- **systemd integration** — one `deploy.sh` and you have a production service with hardening
-- **Structured audit logging** — every tool call logged to stderr/journald with timestamp, tool name, arguments, and status
-- **Zero hardcoded IPs** — all configuration via environment variables
+- **Allowlist-based command execution** - only approved binaries can run, with fnmatch glob support
+- **systemd integration** - one `deploy.sh` and you have a production service with hardening
+- **Structured audit logging** - every tool call logged to stderr/journald with timestamp, tool name, arguments, and status
+- **Zero hardcoded IPs** - all configuration via environment variables
 
 ---
 
@@ -382,9 +382,9 @@ Authorization: Bearer YOUR_MCP_BRIDGE_TOKEN
 
 Unauthenticated requests receive HTTP 401. The following endpoints are exempt from authentication:
 
-- `GET /` — health check
-- `GET /health` — health check
-- `GET /ping` — ping check
+- `GET /`: health check
+- `GET /health`: health check
+- `GET /ping`: ping check
 
 ### Command Allowlist
 
@@ -417,10 +417,10 @@ journalctl -u hermes-mcp-bridge -f
 
 The included systemd unit enables:
 
-- `NoNewPrivileges=yes` — prevent privilege escalation
-- `ProtectSystem=full` — mount `/usr` and `/boot` as read-only
-- `ProtectHome=read-only` — home directories are read-only
-- `ReadWritePaths=/tmp` — only `/tmp` is writable
+- `NoNewPrivileges=yes`: prevent privilege escalation
+- `ProtectSystem=full`: mount `/usr` and `/boot` as read-only
+- `ProtectHome=read-only`: home directories are read-only
+- `ReadWritePaths=/tmp`: only `/tmp` is writable
 
 ### Recommended Network Setup
 
@@ -447,7 +447,7 @@ iptables -A INPUT -p tcp --dport 8000 -j DROP
 For read-only monitoring machines, restrict the allowlist in `.env`:
 
 ```bash
-# Minimal allowlist — no command execution, Docker, or file writes
+# Minimal allowlist: no command execution, Docker, or file writes
 MCP_EXECUTE_ALLOWLIST=
 ```
 
