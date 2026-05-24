@@ -110,25 +110,22 @@ def _safe_path(path: str) -> Path:
 
 def _check_execute_allowlist(command: str) -> Optional[str]:
     """
-    Validate that every token of *command* is in the allowlist.
-    Returns None if all tokens are allowed, otherwise an error string.
+    Validate that the first token of *command* is in the allowlist.
+    Returns None if allowed, otherwise an error string.
+    Security relies on shell=False in the caller (no shell injection possible
+    when arguments are passed as a list), so only the binary name matters.
     """
     tokens = shlex.split(command)
     if not tokens:
         return "Empty command"
+    binary_name = os.path.basename(tokens[0]).lower()
 
-    for token in tokens:
-        binary_name = os.path.basename(token).lower()
-        token_allowed = False
-        for allowed_pattern in EXECUTE_ALLOWLIST:
-            # Use fnmatch for glob-style matching (e.g. "docker*" matches "docker-compose")
-            if fnmatch.fnmatch(binary_name, allowed_pattern):
-                token_allowed = True
-                break
-        if not token_allowed:
-            return f"Binary '{binary_name}' not in execute allowlist"
+    for allowed in EXECUTE_ALLOWLIST:
+        # Use fnmatch for glob-style matching (e.g. "docker*" matches "docker-compose")
+        if fnmatch.fnmatch(binary_name, allowed):
+            return None
 
-    return None
+    return f"Binary '{binary_name}' not in execute allowlist"
 
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
@@ -416,8 +413,10 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
     if error:
         return _json_err(error)
 
-    # Split the command into tokens. No shell=True — every token must be
-    # in the allowlist, so pipes and redirects are not supported.
+    # Split the command into tokens and use shell=False so shell metacharacters
+    # (;, |, &&, ``) are treated as literal arguments, not executed.
+    # The allowlist restricts which binary can be called; shell=False prevents
+    # injection through remaining tokens (pipes/redirects not supported).
     cmd_tokens = shlex.split(command)
     try:
         result = subprocess.run(
