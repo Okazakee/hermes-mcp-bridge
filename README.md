@@ -3,7 +3,7 @@
 **Remote Linux machine control via MCP over HTTP.** Run this on any Linux machine you want Hermes Agent to manage. Execute shell commands, manage Docker containers, check systemd services, browse files, and monitor system health over an encrypted WireGuard mesh with Bearer token authentication.
 
 - **Author:** okazakee
-- **Version:** 1.0.0
+- **Version:** 1.1.0
 - **License:** MIT
 
 ---
@@ -242,7 +242,7 @@ This is the primary endpoint for Hermes Agent's native MCP client. It accepts st
   "params": {
     "protocolVersion": "2024-11-05",
     "capabilities": {},
-    "clientInfo": { "name": "Hermes Agent", "version": "1.0.0" }
+    "clientInfo": { "name": "Hermes Agent", "version": "1.1.0" }
   }
 }
 ```
@@ -273,6 +273,8 @@ This is the primary endpoint for Hermes Agent's native MCP client. It accepts st
   }
 }
 ```
+
+**Non-standard `raw` parameter:** When sending a `tools/call` request to `/messages`, you can include `"raw": true` at the top level of the JSON-RPC body. This causes the server to return the raw tool result directly (without the standard JSON-RPC wrapper), which is useful for debugging or for simpler clients that don't implement the full MCP protocol.
 
 ### Legacy direct invocation (`POST /call_tool`)
 

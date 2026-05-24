@@ -22,7 +22,7 @@ VENV_DIR="${APP_DIR}/.venv"
 SERVICE_NAME="hermes-mcp-bridge"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 USER="${SUDO_USER:-root}"
-GROUP="${USER}"
+GROUP="$(id -gn "${USER}")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== Hermes MCP Bridge Deploy ==="
@@ -52,6 +52,12 @@ if [ ! -f "${APP_DIR}/.env" ]; then
     if [ -f "${SCRIPT_DIR}/.env.example" ]; then
         cp "${SCRIPT_DIR}/.env.example" "${APP_DIR}/.env"
         echo "      Copied .env.example to ${APP_DIR}/.env"
+        # Auto-generate a random token if placeholder is still present
+        if grep -q "change-me-to" "${APP_DIR}/.env" 2>/dev/null; then
+            RANDOM_TOKEN="$(openssl rand -hex 32)"
+            sed -i "s/change-me-to.*/MCP_BRIDGE_TOKEN=${RANDOM_TOKEN}/" "${APP_DIR}/.env"
+            echo "      Auto-generated random token for MCP_BRIDGE_TOKEN"
+        fi
         echo "      >>> EDIT THIS FILE before starting the service! <<<"
         echo ""
         echo "      Required: set MCP_BRIDGE_TOKEN to a strong random value"

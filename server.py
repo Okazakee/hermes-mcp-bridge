@@ -110,25 +110,30 @@ def _safe_path(path: str) -> Path:
 
 def _check_execute_allowlist(command: str) -> Optional[str]:
     """
-    Validate that the first token of *command* is in the allowlist.
-    Returns None if allowed, otherwise an error string.
+    Validate that every token of *command* is in the allowlist.
+    Returns None if all tokens are allowed, otherwise an error string.
     """
     tokens = shlex.split(command)
     if not tokens:
         return "Empty command"
-    binary_name = os.path.basename(tokens[0]).lower()
 
-    for allowed in EXECUTE_ALLOWLIST:
-        # Use fnmatch for glob-style matching (e.g. "docker*" matches "docker-compose")
-        if fnmatch.fnmatch(binary_name, allowed):
-            return None
+    for token in tokens:
+        binary_name = os.path.basename(token).lower()
+        token_allowed = False
+        for allowed_pattern in EXECUTE_ALLOWLIST:
+            # Use fnmatch for glob-style matching (e.g. "docker*" matches "docker-compose")
+            if fnmatch.fnmatch(binary_name, allowed_pattern):
+                token_allowed = True
+                break
+        if not token_allowed:
+            return f"Binary '{binary_name}' not in execute allowlist"
 
-    return f"Binary '{binary_name}' not in execute allowlist"
+    return None
 
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Hermes MCP Bridge", version="1.0.0")
+app = FastAPI(title="Hermes MCP Bridge", version="1.1.0")
 
 
 # ── Auth middleware ─────────────────────────────────────────────────────────
@@ -170,7 +175,7 @@ async def health(request: Request = None):
     if request and request.method == "POST":
         # Forward MCP JSON-RPC messages sent to root
         return await messages(request)
-    return {"status": "ok", "service": "Hermes MCP Bridge", "version": "1.0.0"}
+    return {"status": "ok", "service": "Hermes MCP Bridge", "version": "1.1.0"}
 
 
 @app.get("/ping")
@@ -243,7 +248,7 @@ async def messages(request: Request):
                 },
                 "serverInfo": {
                     "name": "Hermes MCP Bridge",
-                    "version": "1.0.0",
+                    "version": "1.1.0",
                 },
             },
         })
@@ -358,6 +363,10 @@ def tool_list_directory(args: Dict[str, Any]) -> str:
 def tool_read_file(args: Dict[str, Any]) -> str:
     path = _safe_path(args["path"])
     try:
+        # Reject files larger than 10MB
+        st_size = path.stat().st_size
+        if st_size > 10 * 1024 * 1024:
+            return _json_err(f"File too large ({st_size} bytes). Maximum size is 10MB.")
         content = path.read_text()
         return _json_ok(content)
     except Exception as exc:
@@ -402,17 +411,17 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
     if not command:
         return _json_err("Missing 'command' argument")
 
-    # Allowlist enforcement
+    # Allowlist enforcement (all tokens validated)
     error = _check_execute_allowlist(command)
     if error:
         return _json_err(error)
 
-    # Use shell=True for pipes/redirects that the user may need.
-    # The allowlist already restricts what binary is called, so this is reasonably safe.
+    # Split the command into tokens. No shell=True — every token must be
+    # in the allowlist, so pipes and redirects are not supported.
+    cmd_tokens = shlex.split(command)
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            cmd_tokens,
             capture_output=True,
             text=True,
             timeout=int(timeout),
@@ -498,7 +507,7 @@ def tool_service_status(args: Dict[str, Any]) -> str:
     if not service:
         return _json_err("Missing 'service' argument")
     result = _run(["systemctl", "status", service, "--no-pager", "-l"])
-    if result["success"]:
+    if result["code"] in (0, 3):  # 0=active, 3=inactive/stopped
         return _json_ok(result["stdout"])
     return _json_err(result["stderr"])
 
@@ -625,6 +634,23 @@ _TOOL_MCP_DEFS = [
     },
 ]
 
+def _validate_tool_registry() -> None:
+    """Check that TOOL_HANDLERS and _TOOL_MCP_DEFS are consistent."""
+    handler_names = set(TOOL_HANDLERS.keys())
+    mcp_names = {t["name"] for t in _TOOL_MCP_DEFS}
+
+    missing_in_handlers = mcp_names - handler_names
+    missing_in_defs = handler_names - mcp_names
+
+    if missing_in_handlers:
+        print(f"WARNING: Tools in _TOOL_MCP_DEFS but missing from TOOL_HANDLERS: {sorted(missing_in_handlers)}", file=sys.stderr)
+    if missing_in_defs:
+        print(f"WARNING: Tools in TOOL_HANDLERS but missing from _TOOL_MCP_DEFS: {sorted(missing_in_defs)}", file=sys.stderr)
+
+    if not missing_in_handlers and not missing_in_defs:
+        print(f"Tool registry OK: {len(handler_names)} tools registered", file=sys.stderr)
+
+
 def _get_mcp_tools():
     """Return tool definitions in MCP-compatible format."""
     return _TOOL_MCP_DEFS
@@ -646,6 +672,7 @@ def main() -> None:
     print(f"Hermes MCP Bridge starting on {BIND_HOST}:{BIND_PORT}", file=sys.stderr)
     print(f"  Allowlist: {EXECUTE_ALLOWLIST}", file=sys.stderr)
     print(f"  Auth: Bearer token configured", file=sys.stderr)
+    _validate_tool_registry()
 
     uvicorn.run(
         "server:app",
